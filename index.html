@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;background:#0f1115;color:#e8e8ea;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding-bottom:24px}
+  body{margin:0;background:#0f1115;color:#e8e8ea;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding-bottom:32px}
   header{position:sticky;top:0;z-index:20;background:#0f1115ee;backdrop-filter:blur(10px);padding:12px 14px;display:flex;gap:10px;align-items:center;border-bottom:1px solid #ffffff12}
   header h1{font-size:16px;margin:0;font-weight:600;flex:0 0 auto}
   #q{flex:1;background:#1c2028;border:1px solid #ffffff14;border-radius:10px;padding:9px 12px;color:#e8e8ea;font-size:14px;outline:none}
@@ -27,6 +27,7 @@
   .eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:9px;margin-top:14px}
   .ep{padding:11px 4px;text-align:center;background:#1c2028;border:1px solid #ffffff10;border-radius:9px;font-size:13px;color:#d8d8dc}
   .ep:active{background:#ff4d6d}
+  .more{text-align:center;padding:16px 0 24px;color:#8a8f99;font-size:13px}
   #player{position:fixed;inset:0;background:#000;z-index:100;display:none;flex-direction:column}
   #player.on{display:flex}
   #player .bar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#000c}
@@ -39,6 +40,8 @@
   .det h2{font-size:17px;margin:2px 0 6px}
   .det .meta{font-size:12.5px;color:#8a8f99;margin-bottom:8px}
   .det .desc{font-size:13px;color:#a9aeb8;line-height:1.7}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #ffffff33;border-top-color:#ff4d6d;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -64,7 +67,7 @@ const SECRET = 'hg-dx150-2026-11-w7Qm4pLz';
 const ORIGIN = 'https://drdrdrrddrdr.github.io';
 const REFERER= 'https://drdrdrrddrdr.github.io/huangguo-web/';
 const SITE   = 'https://huangguoai.com';
-const UA     = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const PAGE_SIZE = 24;
 
 let _key = null;
 async function hmacHex(msg) {
@@ -80,12 +83,10 @@ async function api(path) {
   const win = Math.floor(Date.now() / 1000 / 300);
   const sig = await hmacHex(win + '\n' + path);
   const r = await fetch(API + path, {
-    // file:// 打开时浏览器默认不发 Referer，Worker 会拒；这里强制带上
     referrer: REFERER,
     referrerPolicy: 'unsafe-url',
     credentials: 'omit',
-    headers: { 'Origin': ORIGIN, 'Referer': REFERER,
-               'X-HG-Ts': String(win * 300), 'X-HG-Sig': sig }
+    headers: { 'X-HG-Ts': String(win * 300), 'X-HG-Sig': sig }
   });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
@@ -100,75 +101,128 @@ const $view = document.getElementById('view');
 const $tabs = document.getElementById('tabs');
 const $q = document.getElementById('q');
 
-function loading(t) { $view.innerHTML = '<div class="msg">' + (t || '加载中…') + '</div>'; }
-function err(t) { $view.innerHTML = '<div class="msg err">' + t + '</div>'; }
+// 列表状态
+let state = { mode: 'cat', cat: 'ai-duanju', kw: '', page: 1, total: 0, busy: false, done: false, items: [] };
 
-let CATS = [
+const CATS = [
   { id: 'ai-duanju', name: 'AI短剧' },
   { id: 'ai-manju',  name: 'AI漫剧' },
+  { id: 'ai-huanlian', name: 'AI换脸' },
+  { id: 'ai-mogai',  name: 'AI魔改' },
   { id: 'ranks',     name: '排行榜' },
   { id: 'chigua',    name: '吃瓜' }
 ];
-let curCat = 'ai-duanju';
 
 function renderTabs() {
   $tabs.innerHTML = CATS.map(c =>
-    '<div class="tab' + (c.id === curCat ? ' on' : '') + '" onclick="switchCat(\'' + c.id + '\')">' + c.name + '</div>'
+    '<div class="tab' + (state.mode === 'cat' && c.id === state.cat ? ' on' : '') +
+    '" onclick="switchCat(\'' + c.id + '\')">' + c.name + '</div>'
   ).join('');
-}
-
-function switchCat(id) {
-  curCat = id;
-  renderTabs();
-  loadCat();
-}
-
-function cards(list) {
-  if (!list || !list.length) return '<div class="msg">这里还没有内容</div>';
-  return '<div class="grid">' + list.map(v => {
-    const p = pic(v.vod_pic);
-    return '<div class="card" onclick="openDetail(\'' + v.vod_id + '\')">' +
-      '<div class="pic">' + (p ? '<img loading="lazy" src="' + p + '" onerror="this.style.display=\'none\'">' : '') + '</div>' +
-      '<div class="name">' + esc(v.vod_name) + '</div>' +
-      '<div class="rem">' + esc(v.vod_remarks || '') + '</div>' +
-      '</div>';
-  }).join('') + '</div>';
 }
 
 function esc(s) {
   return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-async function loadCat() {
-  loading();
+function cardHtml(v) {
+  const p = pic(v.vod_pic);
+  return '<div class="card" onclick="openDetail(\'' + v.vod_id + '\')">' +
+    '<div class="pic">' + (p ? '<img loading="lazy" src="' + p + '" onerror="this.style.display=\'none\'">' : '') + '</div>' +
+    '<div class="name">' + esc(v.vod_name) + '</div>' +
+    '<div class="rem">' + esc(v.vod_remarks || '') + '</div>' +
+    '</div>';
+}
+
+function showList() {
+  $view.innerHTML = state.items.length
+    ? '<div class="grid">' + state.items.map(cardHtml).join('') + '</div><div class="more" id="more"></div>'
+    : '<div class="msg">这里还没有内容</div>';
+  updateMore();
+}
+
+function updateMore() {
+  const el = document.getElementById('more');
+  if (!el) return;
+  if (state.busy) el.innerHTML = '<span class="spin"></span>加载中…';
+  else if (state.done) el.textContent = '— 到底了 —';
+  else el.textContent = '上滑加载更多';
+}
+
+function pathFor(p) {
+  if (state.mode === 'search') return '/api/search/' + encodeURIComponent(state.kw) + '?page=' + p + '&size=' + PAGE_SIZE;
+  if (state.cat === 'chigua') return '/api/chigua?cate=all&page=' + p + '&size=' + PAGE_SIZE;
+  if (state.cat === 'ranks') return '/api/ranks/hot?page=' + p + '&size=' + PAGE_SIZE;
+  return '/api/category/' + state.cat + '?page=' + p + '&size=' + PAGE_SIZE + '&sort=latest';
+}
+
+async function fetchPage(p) {
+  state.busy = true;
+  updateMore();
   try {
-    let d;
-    if (curCat === 'chigua') d = await api('/api/chigua?cate=all&page=1&size=24');
-    else if (curCat === 'ranks') d = await api('/api/ranks/hot?page=1&size=24');
-    else d = await api('/api/category/' + curCat + '?page=1&size=24&sort=latest');
-    $view.innerHTML = cards(d.list);
-  } catch (e) { err('加载失败：' + e.message + '<br>检查梯子有没有开'); }
+    const d = await api(pathFor(p));
+    const list = (d.list || []).map(v => ({
+      vod_id: String(v.vod_id || v.id || ''),
+      vod_name: v.vod_name || v.title || '',
+      vod_pic: v.vod_pic || v.cover || '',
+      vod_remarks: v.vod_remarks || ''
+    }));
+    if (p === 1) state.items = list;
+    else state.items = state.items.concat(list);
+    state.page = p;
+    state.total = Number(d.total || state.items.length);
+    const pages = Number(d.pagecount || 0);
+    if (!list.length || state.items.length >= state.total || (pages && p >= pages)) state.done = true;
+    else state.done = false;
+  } catch (e) {
+    if (p === 1) $view.innerHTML = '<div class="msg err">加载失败：' + e.message + '<br>检查梯子有没有开</div>';
+    state.done = true;
+    state.busy = false;
+    return;
+  }
+  state.busy = false;
+  if (p === 1) showList(); else { $view.innerHTML = '<div class="grid">' + state.items.map(cardHtml).join('') + '</div><div class="more" id="more"></div>'; updateMore(); }
+}
+
+async function loadMore() {
+  if (state.busy || state.done) return;
+  await fetchPage(state.page + 1);
+}
+
+function newList(mode, cat, kw) {
+  state = { mode, cat, kw, page: 0, total: 0, busy: false, done: false, items: [] };
+  renderTabs();
+  fetchPage(1);
+}
+
+function switchCat(id) {
+  $q.value = '';
+  newList('cat', id, '');
 }
 
 async function openDetail(id) {
-  loading('读取详情…');
+  $view.innerHTML = '<div class="msg"><span class="spin"></span>读取详情…</div>';
   try {
     const d = await api('/api/detail/' + encodeURIComponent(id));
     const v = (d.list && d.list[0]) || null;
-    if (!v) return err('没找到这部剧');
+    if (!v) { $view.innerHTML = '<div class="msg err">没找到这部剧</div>'; return; }
     const n = Number(v.vod_episode_count || 1);
     let eps = '';
     for (let i = 1; i <= n; i++) {
-      eps += '<div class="ep" onclick="play(\'' + id + '\',' + i + ',\'' + esc(v.vod_name) + '\')">第' + i + '集</div>';
+      eps += '<div class="ep" onclick="play(\'' + id + '\',' + i + ',\'' + esc(v.vod_name).replace(/'/g, '') + '\')">第' + i + '集</div>';
     }
     $view.innerHTML =
-      '<button class="back" onclick="loadCat()">‹ 返回</button>' +
+      '<button class="back" onclick="backToList()">‹ 返回</button>' +
       '<div class="det"><h2>' + esc(v.vod_name) + '</h2>' +
       '<div class="meta">' + esc(v.vod_remarks || '') + '</div>' +
       '<div class="desc">' + esc(v.vod_desc || '') + '</div></div>' +
       (n ? '<div class="eps">' + eps + '</div>' : '<div class="msg">暂无剧集</div>');
     window.scrollTo(0, 0);
-  } catch (e) { err('详情失败：' + e.message); }
+  } catch (e) { $view.innerHTML = '<div class="msg err">详情失败：' + e.message + '</div>'; }
+}
+
+function backToList() {
+  showList();
+  window.scrollTo(0, 0);
 }
 
 async function play(id, ep, name) {
@@ -178,15 +232,14 @@ async function play(id, ep, name) {
   try {
     const d = await api('/api/play?url=' + encodeURIComponent(id) + '&ep=' + ep);
     if (!d || !d.url) throw new Error('没拿到地址');
-    const src = d.url;
     if (window.Hls && Hls.isSupported()) {
       if (window._hls) window._hls.destroy();
       window._hls = new Hls();
-      window._hls.loadSource(src);
+      window._hls.loadSource(d.url);
       window._hls.attachMedia(video);
       window._hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
     } else {
-      video.src = src;
+      video.src = d.url;
       video.play().catch(() => {});
     }
   } catch (e) {
@@ -203,26 +256,33 @@ function closePlayer() {
   document.getElementById('player').classList.remove('on');
 }
 
+// 搜索（输入防抖）
 let timer = null;
 $q.addEventListener('input', () => {
   clearTimeout(timer);
   const kw = $q.value.trim();
-  if (!kw) { loadCat(); return; }
-  timer = setTimeout(() => doSearch(kw), 500);
+  timer = setTimeout(() => {
+    if (!kw) { newList('cat', state.cat || 'ai-duanju', ''); return; }
+    newList('search', state.cat, kw);
+  }, 500);
 });
 
-async function doSearch(kw) {
-  loading('搜索「' + esc(kw) + '」…');
-  try {
-    const d = await api('/api/search/' + encodeURIComponent(kw) + '?page=1&size=30');
-    $view.innerHTML = cards(d.list);
-  } catch (e) { err('搜索失败：' + e.message); }
-}
+// 无限滚动
+let ticking = false;
+window.addEventListener('scroll', () => {
+  if (ticking) return;
+  ticking = true;
+  requestAnimationFrame(() => {
+    ticking = false;
+    if (document.getElementById('player').classList.contains('on')) return;
+    const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
+    if (nearBottom) loadMore();
+  });
+}, { passive: true });
 
-(async () => {
-  renderTabs();
-  await loadCat();
-})();
+// 首屏
+renderTabs();
+fetchPage(1);
 </script>
 </body>
 </html>
