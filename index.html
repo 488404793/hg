@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>黄果短剧</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#0f1115;color:#e8e8ea;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding-bottom:24px}
+  header{position:sticky;top:0;z-index:20;background:#0f1115ee;backdrop-filter:blur(10px);padding:12px 14px;display:flex;gap:10px;align-items:center;border-bottom:1px solid #ffffff12}
+  header h1{font-size:16px;margin:0;font-weight:600;flex:0 0 auto}
+  #q{flex:1;background:#1c2028;border:1px solid #ffffff14;border-radius:10px;padding:9px 12px;color:#e8e8ea;font-size:14px;outline:none}
+  #q:focus{border-color:#ff4d6d}
+  .wrap{padding:12px 14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:12px}
+  .card{cursor:pointer}
+  .card .pic{width:100%;aspect-ratio:3/4;background:#1c2028;border-radius:10px;overflow:hidden;position:relative}
+  .card .pic img{width:100%;height:100%;object-fit:cover;display:block}
+  .card .name{font-size:12.5px;margin-top:6px;line-height:1.35;color:#d8d8dc;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .rem{font-size:11px;color:#8a8f99;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tabs{display:flex;gap:8px;overflow-x:auto;padding:10px 14px 2px;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex:0 0 auto;padding:7px 14px;border-radius:999px;background:#1c2028;border:1px solid #ffffff10;font-size:13px;color:#b8bcc4;white-space:nowrap}
+  .tab.on{background:#ff4d6d;border-color:#ff4d6d;color:#fff;font-weight:600}
+  .eps{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:9px;margin-top:14px}
+  .ep{padding:11px 4px;text-align:center;background:#1c2028;border:1px solid #ffffff10;border-radius:9px;font-size:13px;color:#d8d8dc}
+  .ep:active{background:#ff4d6d}
+  #player{position:fixed;inset:0;background:#000;z-index:100;display:none;flex-direction:column}
+  #player.on{display:flex}
+  #player .bar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#000c}
+  #player .bar .t{flex:1;font-size:13.5px;color:#dcdce0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #player .bar button{background:#ffffff1a;border:0;color:#fff;border-radius:8px;padding:7px 13px;font-size:13px}
+  #player video{width:100%;flex:1;background:#000;object-fit:contain}
+  .back{background:none;border:0;color:#ff4d6d;font-size:14px;padding:8px 0;margin-bottom:4px}
+  .msg{color:#8a8f99;font-size:13px;padding:20px 0;text-align:center}
+  .msg.err{color:#ff6b6b}
+  .det h2{font-size:17px;margin:2px 0 6px}
+  .det .meta{font-size:12.5px;color:#8a8f99;margin-bottom:8px}
+  .det .desc{font-size:13px;color:#a9aeb8;line-height:1.7}
+</style>
+</head>
+<body>
+<header>
+  <h1>黄果</h1>
+  <input id="q" placeholder="搜剧名…" autocomplete="off">
+</header>
+
+<div class="tabs" id="tabs"></div>
+<div class="wrap" id="view"></div>
+
+<div id="player">
+  <div class="bar">
+    <div class="t" id="ptitle"></div>
+    <button onclick="closePlayer()">关闭</button>
+  </div>
+  <video id="vid" controls playsinline webkit-playsinline></video>
+</div>
+
+<script>
+const API    = 'https://huangguo-parser.13681235735.workers.dev';
+const SECRET = 'hg-dx150-2026-11-w7Qm4pLz';
+const ORIGIN = 'https://drdrdrrddrdr.github.io';
+const REFERER= 'https://drdrdrrddrdr.github.io/huangguo-web/';
+const SITE   = 'https://huangguoai.com';
+const UA     = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+let _key = null;
+async function hmacHex(msg) {
+  if (!_key) {
+    _key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SECRET),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  }
+  const buf = await crypto.subtle.sign('HMAC', _key, new TextEncoder().encode(msg));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function api(path) {
+  const win = Math.floor(Date.now() / 1000 / 300);
+  const sig = await hmacHex(win + '\n' + path);
+  const r = await fetch(API + path, {
+    // file:// 打开时浏览器默认不发 Referer，Worker 会拒；这里强制带上
+    referrer: REFERER,
+    referrerPolicy: 'unsafe-url',
+    credentials: 'omit',
+    headers: { 'Origin': ORIGIN, 'Referer': REFERER,
+               'X-HG-Ts': String(win * 300), 'X-HG-Sig': sig }
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function pic(u) {
+  if (!u) return '';
+  return u.startsWith('http') ? API + '/media?url=' + encodeURIComponent(u) : API + u;
+}
+
+const $view = document.getElementById('view');
+const $tabs = document.getElementById('tabs');
+const $q = document.getElementById('q');
+
+function loading(t) { $view.innerHTML = '<div class="msg">' + (t || '加载中…') + '</div>'; }
+function err(t) { $view.innerHTML = '<div class="msg err">' + t + '</div>'; }
+
+let CATS = [
+  { id: 'ai-duanju', name: 'AI短剧' },
+  { id: 'ai-manju',  name: 'AI漫剧' },
+  { id: 'ranks',     name: '排行榜' },
+  { id: 'chigua',    name: '吃瓜' }
+];
+let curCat = 'ai-duanju';
+
+function renderTabs() {
+  $tabs.innerHTML = CATS.map(c =>
+    '<div class="tab' + (c.id === curCat ? ' on' : '') + '" onclick="switchCat(\'' + c.id + '\')">' + c.name + '</div>'
+  ).join('');
+}
+
+function switchCat(id) {
+  curCat = id;
+  renderTabs();
+  loadCat();
+}
+
+function cards(list) {
+  if (!list || !list.length) return '<div class="msg">这里还没有内容</div>';
+  return '<div class="grid">' + list.map(v => {
+    const p = pic(v.vod_pic);
+    return '<div class="card" onclick="openDetail(\'' + v.vod_id + '\')">' +
+      '<div class="pic">' + (p ? '<img loading="lazy" src="' + p + '" onerror="this.style.display=\'none\'">' : '') + '</div>' +
+      '<div class="name">' + esc(v.vod_name) + '</div>' +
+      '<div class="rem">' + esc(v.vod_remarks || '') + '</div>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+async function loadCat() {
+  loading();
+  try {
+    let d;
+    if (curCat === 'chigua') d = await api('/api/chigua?cate=all&page=1&size=24');
+    else if (curCat === 'ranks') d = await api('/api/ranks/hot?page=1&size=24');
+    else d = await api('/api/category/' + curCat + '?page=1&size=24&sort=latest');
+    $view.innerHTML = cards(d.list);
+  } catch (e) { err('加载失败：' + e.message + '<br>检查梯子有没有开'); }
+}
+
+async function openDetail(id) {
+  loading('读取详情…');
+  try {
+    const d = await api('/api/detail/' + encodeURIComponent(id));
+    const v = (d.list && d.list[0]) || null;
+    if (!v) return err('没找到这部剧');
+    const n = Number(v.vod_episode_count || 1);
+    let eps = '';
+    for (let i = 1; i <= n; i++) {
+      eps += '<div class="ep" onclick="play(\'' + id + '\',' + i + ',\'' + esc(v.vod_name) + '\')">第' + i + '集</div>';
+    }
+    $view.innerHTML =
+      '<button class="back" onclick="loadCat()">‹ 返回</button>' +
+      '<div class="det"><h2>' + esc(v.vod_name) + '</h2>' +
+      '<div class="meta">' + esc(v.vod_remarks || '') + '</div>' +
+      '<div class="desc">' + esc(v.vod_desc || '') + '</div></div>' +
+      (n ? '<div class="eps">' + eps + '</div>' : '<div class="msg">暂无剧集</div>');
+    window.scrollTo(0, 0);
+  } catch (e) { err('详情失败：' + e.message); }
+}
+
+async function play(id, ep, name) {
+  document.getElementById('ptitle').textContent = name + ' 第' + ep + '集';
+  document.getElementById('player').classList.add('on');
+  const video = document.getElementById('vid');
+  try {
+    const d = await api('/api/play?url=' + encodeURIComponent(id) + '&ep=' + ep);
+    if (!d || !d.url) throw new Error('没拿到地址');
+    const src = d.url;
+    if (window.Hls && Hls.isSupported()) {
+      if (window._hls) window._hls.destroy();
+      window._hls = new Hls();
+      window._hls.loadSource(src);
+      window._hls.attachMedia(video);
+      window._hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    } else {
+      video.src = src;
+      video.play().catch(() => {});
+    }
+  } catch (e) {
+    alert('播放失败：' + e.message);
+    closePlayer();
+  }
+}
+
+function closePlayer() {
+  const video = document.getElementById('vid');
+  video.pause();
+  video.removeAttribute('src');
+  if (window._hls) { window._hls.destroy(); window._hls = null; }
+  document.getElementById('player').classList.remove('on');
+}
+
+let timer = null;
+$q.addEventListener('input', () => {
+  clearTimeout(timer);
+  const kw = $q.value.trim();
+  if (!kw) { loadCat(); return; }
+  timer = setTimeout(() => doSearch(kw), 500);
+});
+
+async function doSearch(kw) {
+  loading('搜索「' + esc(kw) + '」…');
+  try {
+    const d = await api('/api/search/' + encodeURIComponent(kw) + '?page=1&size=30');
+    $view.innerHTML = cards(d.list);
+  } catch (e) { err('搜索失败：' + e.message); }
+}
+
+(async () => {
+  renderTabs();
+  await loadCat();
+})();
+</script>
+</body>
+</html>
