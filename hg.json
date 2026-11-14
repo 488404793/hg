@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "huangguo",
+      "name": "黄果短剧",
+      "type": 3,
+      "api": "https://fastly.jsdelivr.net/gh/488404793/hg@main/hg_spider.js",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 0,
+      "changeable": 0
+    }
+  ]
+}
